@@ -96,6 +96,15 @@ jobs:
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Verify Kubernetes secret is configured
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          if [ -z "$KUBE_CONFIG" ]; then
+            echo "::error::KUBE_CONFIG is missing. Add it under Settings > Environments > production > Environment secrets, or remove environment: production to use a repository secret."
+            exit 1
+          fi
+
       - name: Configure kubeconfig
         uses: azure/k8s-set-context@v4
         with:
