@@ -1,0 +1,121 @@
+name: IntelliTender CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      push_images:
+        description: Push images to Docker Hub
+        required: true
+        default: false
+        type: boolean
+      deploy:
+        description: Deploy the images to Kubernetes
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: docker.io
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/moneet-intellitender-frontend
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/moneet-intellitender-backend
+  IMAGE_TAG: sha-${{ github.sha }}
+
+jobs:
+  build-and-push:
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push' || inputs.push_images || inputs.deploy
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: ${{ github.event_name == 'push' || inputs.push_images || inputs.deploy }}
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }}
+            ${{ env.BACKEND_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: ${{ github.event_name == 'push' || inputs.push_images || inputs.deploy }}
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.FRONTEND_API_BASE_URL }}
+            VITE_GOOGLE_CLIENT_ID=${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }}
+            ${{ env.FRONTEND_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Write published image summary
+        run: |
+          {
+            echo "## Docker images"
+            echo ""
+            echo "- Backend: \`${BACKEND_IMAGE}:${IMAGE_TAG}\`"
+            echo "- Frontend: \`${FRONTEND_IMAGE}:${IMAGE_TAG}\`"
+            echo "- Floating tags: \`latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to Kubernetes
+    if: github.event_name == 'push' || inputs.deploy
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Render image references
+        env:
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          sed \
+            -e "s|moneet-intellitender-frontend:v1|${FRONTEND_IMAGE}:${IMAGE_TAG}|g" \
+            -e "s|moneet-intellitender-backend:v1|${BACKEND_IMAGE}:${IMAGE_TAG}|g" \
+            k8s/deployment.yaml > /tmp/intellitender-deployment.yaml
+
+      - name: Apply Kubernetes resources
+        run: kubectl apply -f /tmp/intellitender-deployment.yaml
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/moneet-intellitender-frontend --timeout=180s
+          kubectl rollout status deployment/moneet-intellitender-backend --timeout=180s
