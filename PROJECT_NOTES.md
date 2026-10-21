@@ -83,7 +83,13 @@ npm install
 npm run dev
 ```
 
-The repository also contains `start-intellitender.bat` for the project's local startup workflow.
+The repository also contains `start-intellitender.cmd` for the project's local startup workflow. From the repository root, run:
+
+```cmd
+start-intellitender.cmd
+```
+
+This opens separate backend and frontend development windows and launches the frontend at `http://localhost:5173`. The older `start-intellitender.bat` name remains as a compatibility wrapper.
 
 ### Local AI setup
 
