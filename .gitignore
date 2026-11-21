@@ -1,6 +1,8 @@
 # Dependencies
 **/node_modules/
 
+./paper
+
 # Build outputs
 **/dist/
 **/build/
